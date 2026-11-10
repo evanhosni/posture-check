@@ -1,4 +1,5 @@
 import type { NormalizedLandmark } from '@mediapipe/tasks-vision'
+import type { PostureIssue, PostureMetrics, PostureVerdict } from './types'
 
 const NOSE = 0
 const LEFT_EAR = 7
@@ -6,42 +7,35 @@ const RIGHT_EAR = 8
 const LEFT_SHOULDER = 11
 const RIGHT_SHOULDER = 12
 
-const MIN_VISIBILITY = 0.5
-
-export interface PostureMetrics {
-  /** Ear-to-shoulder vertical gap over shoulder width. Shrinks when the neck collapses. */
-  neckRatio: number
-  /** Shoulder width in frame units. Grows as the body moves toward the camera. */
-  shoulderWidth: number
-  /** Shoulder height difference over shoulder width. Non-zero when leaning to one side. */
-  shoulderSlope: number
-  /** Head offset from the shoulder midpoint over shoulder width. */
-  headOffset: number
-}
-
-export interface PostureVerdict {
-  good: boolean
-  issues: string[]
-}
+// Pose models still return a skeleton for an empty chair, just a poorly seen one.
+const MIN_VISIBILITY = 0.7
+const MIN_SHOULDER_WIDTH = 0.05
 
 /** Deviation from baseline that counts as bad posture at sensitivity 1. */
-const LIMITS = {
+export const LIMITS = {
   slouch: 0.09,
   lean: 0.13,
   shoulderSlope: 0.11,
   headOffset: 0.14,
 }
 
+export const MESSAGES = {
+  slouch: 'Head dropping toward your shoulders. Lengthen your neck.',
+  lean: 'Leaning in toward the screen. Sit back.',
+  shoulderSlope: 'Shoulders uneven. Level them out.',
+  headOffset: 'Head drifting off center. Square up to the screen.',
+}
+
 export function measure(landmarks: NormalizedLandmark[]): PostureMetrics | null {
   const points = [NOSE, LEFT_EAR, RIGHT_EAR, LEFT_SHOULDER, RIGHT_SHOULDER].map((i) => landmarks[i])
-  if (points.some((p) => !p || (p.visibility ?? 1) < MIN_VISIBILITY)) return null
+  if (points.some((point) => !point || (point.visibility ?? 1) < MIN_VISIBILITY)) return null
 
   const [nose, leftEar, rightEar, leftShoulder, rightShoulder] = points
   const shoulderWidth = Math.hypot(
     leftShoulder.x - rightShoulder.x,
     leftShoulder.y - rightShoulder.y,
   )
-  if (shoulderWidth < 0.05) return null
+  if (shoulderWidth < MIN_SHOULDER_WIDTH) return null
 
   const shoulderMidX = (leftShoulder.x + rightShoulder.x) / 2
   const shoulderMidY = (leftShoulder.y + rightShoulder.y) / 2
@@ -55,7 +49,11 @@ export function measure(landmarks: NormalizedLandmark[]): PostureMetrics | null 
   }
 }
 
-export function smooth(previous: PostureMetrics | null, next: PostureMetrics, weight = 0.25) {
+export function smooth(
+  previous: PostureMetrics | null,
+  next: PostureMetrics,
+  weight = 0.25,
+): PostureMetrics {
   if (!previous) return next
   return {
     neckRatio: blend(previous.neckRatio, next.neckRatio, weight),
@@ -67,11 +65,11 @@ export function smooth(previous: PostureMetrics | null, next: PostureMetrics, we
 
 export function average(samples: PostureMetrics[]): PostureMetrics {
   const total = samples.reduce(
-    (sum, s) => ({
-      neckRatio: sum.neckRatio + s.neckRatio,
-      shoulderWidth: sum.shoulderWidth + s.shoulderWidth,
-      shoulderSlope: sum.shoulderSlope + s.shoulderSlope,
-      headOffset: sum.headOffset + s.headOffset,
+    (sum, sample) => ({
+      neckRatio: sum.neckRatio + sample.neckRatio,
+      shoulderWidth: sum.shoulderWidth + sample.shoulderWidth,
+      shoulderSlope: sum.shoulderSlope + sample.shoulderSlope,
+      headOffset: sum.headOffset + sample.headOffset,
     }),
     { neckRatio: 0, shoulderWidth: 0, shoulderSlope: 0, headOffset: 0 },
   )
@@ -86,23 +84,18 @@ export function average(samples: PostureMetrics[]): PostureMetrics {
 export function evaluate(
   baseline: PostureMetrics,
   current: PostureMetrics,
-  sensitivity: number,
+  sensitivity = 1,
 ): PostureVerdict {
-  const limit = (value: number) => value / sensitivity
-  const issues: string[] = []
+  const issues: PostureIssue[] = []
+  const add = (kind: keyof typeof LIMITS, deviation: number) => {
+    const limit = LIMITS[kind] / sensitivity
+    if (deviation > limit) issues.push({ kind, message: MESSAGES[kind], severity: deviation / limit })
+  }
 
-  if (current.neckRatio < baseline.neckRatio - limit(LIMITS.slouch)) {
-    issues.push('Head dropping toward your shoulders — lengthen your neck')
-  }
-  if (current.shoulderWidth > baseline.shoulderWidth * (1 + limit(LIMITS.lean))) {
-    issues.push('Leaning in toward the screen — sit back')
-  }
-  if (Math.abs(current.shoulderSlope - baseline.shoulderSlope) > limit(LIMITS.shoulderSlope)) {
-    issues.push('Shoulders uneven — level them out')
-  }
-  if (Math.abs(current.headOffset - baseline.headOffset) > limit(LIMITS.headOffset)) {
-    issues.push('Head drifting off center — square up to the screen')
-  }
+  add('slouch', baseline.neckRatio - current.neckRatio)
+  add('lean', current.shoulderWidth / baseline.shoulderWidth - 1)
+  add('shoulderSlope', Math.abs(current.shoulderSlope - baseline.shoulderSlope))
+  add('headOffset', Math.abs(current.headOffset - baseline.headOffset))
 
   return { good: issues.length === 0, issues }
 }

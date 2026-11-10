@@ -1,24 +1,58 @@
 # Posture Check
 
-Watches you through the webcam and tells you when you start slouching. Pose
-estimation runs locally in the browser with MediaPipe Pose Landmarker — no video
-ever leaves the machine.
+A Chrome and Firefox extension that watches you through the webcam and sounds off
+when you start slouching. Pose estimation runs locally — the video never leaves
+the machine, and the extension makes no network requests at runtime.
 
-## Run
+## Install in Chrome (unpacked)
 
 ```bash
 yarn
-yarn start
+yarn build
 ```
 
-Then allow camera access, sit the way you want to sit, and press **Calibrate
-good posture**. The app holds that pose as the baseline and compares every
-frame against it.
+1. Open `chrome://extensions`.
+2. Turn on **Developer mode** (top right).
+3. Click **Load unpacked** and pick the `dist` folder in this repo.
+4. Pin the extension so the icon stays visible.
+
+There is no page and no panel. The toolbar icon is the switch:
+
+- **Grayed out** — off. This is the default; nothing runs.
+- **Click it** — a small window opens in the middle of the screen reading
+  "Calibrating posture / Sit up straight." with a bar that fills over five
+  seconds, then closes itself.
+- **In color** — on and watching. Click again to turn it off.
+- **Red `!` badge** — your posture has gone bad right now, whether or not the
+  alert delay has elapsed yet.
+
+The first time it is switched on, a small window asks for camera access once and
+closes itself; an offscreen document cannot raise that prompt on its own.
+
+If Chrome refuses to open the camera from the offscreen document, the extension
+falls back to running it in a small background window, which always works, and
+says so. The settings dialog shows the error that caused it.
+
+Settings live in a dialog: right-click the icon → **Options**. Sensitivity
+(1-10, default 5), the alert delay (default 5s), the sounds, desktop
+notifications (off until you turn them on), plus
+**Recalibrate now** and **Test alert**. Calibration is always 5 seconds.
+
+## Install in Firefox (temporary)
+
+```bash
+yarn build:firefox
+```
+
+Open `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…** → pick
+`dist-firefox/manifest.json`. Firefox has no offscreen-document API, so the
+camera can only run in a visible page: switching on opens a small monitor window
+that has to stay open. Temporary add-ons are also dropped on restart.
 
 ## How it decides posture is bad
 
-Each frame the pose model returns body landmarks. Four numbers are derived from
-the nose, ears and shoulders, all normalized by shoulder width so they survive
+Each frame, MediaPipe's pose model returns body landmarks. Four numbers come out
+of the nose, ears and shoulders, all normalized by shoulder width so they survive
 moving around in the chair:
 
 | Metric | What it catches |
@@ -29,14 +63,57 @@ moving around in the chair:
 | Head offset from shoulder center | Head drifting off center |
 
 When any metric strays far enough from the calibrated baseline for the
-configured number of seconds, a desktop notification and a chime fire. The
-alert repeats at most once a minute while posture stays bad, and re-arms after
-three seconds of sitting well again.
+configured number of seconds, a two-wail siren plays, a robotic voice announces
+"Bad posture alert", and a desktop notification fires. The alert repeats at most
+once a minute while posture stays bad, and re-arms after three seconds of
+sitting well again.
 
-Sensitivity scales every threshold: higher is pickier.
+Sensitivity is a 1-10 dial that scales every threshold, doubling every five
+steps: 5 is neutral, 1 is forgiving but still catches a real slouch, and 10
+reacts to small movements. Switching on always recalibrates, so the baseline matches how
+you are sitting right now.
+
+## Layout
+
+```
+src/            Camera-to-verdict core, independent of any extension API
+  watcher.ts    PostureWatcher: camera, detection loop, scoring, alert timing
+  metrics.ts    Landmarks -> posture metrics -> verdict
+  alerts.ts     Siren, voice and notification
+  pose.ts       MediaPipe pose landmarker setup
+  overlay.ts    Skeleton drawing helper
+extension/
+  background.ts Service worker: the on/off switch, icon state, calibration UI,
+                notifications and the camera host's lifecycle
+  shared/       Settings, message protocol, PostureWatcher-to-worker binding
+  offscreen.*   Chrome's invisible background camera host
+  monitor.*     One-time camera permission window; the camera host on Firefox
+  options.*     The settings dialog
+extension/icon-source.png  The image every icon size is rendered from
+scripts/        Bundled wasm + model download, icon generation, manifest writing
+```
+
+The camera only runs while the extension is switched on, in the offscreen
+document on Chrome and in the monitor window on Firefox.
+
+## Development
+
+```bash
+yarn dev            # rebuild dist/ on change, then hit Reload in chrome://extensions
+yarn typecheck
+yarn build          # Chrome -> dist/
+yarn build:firefox  # Firefox -> dist-firefox/
+```
+
+`yarn assets` (run by the builds) copies the MediaPipe wasm runtime out of
+`node_modules` and downloads the pose model into `extension/public`, so the
+packed extension loads everything from its own origin — MV3 forbids pulling code
+from a CDN at runtime.
 
 ## Notes
 
-- Grant notification permission when prompted, otherwise only the on-screen
-  badge and chime appear.
-- Recalibrate after changing chair, desk or camera position.
+- The pose model is ~6 MB, so the unpacked extension is ~38 MB. None of it is
+  fetched at runtime.
+- Chrome 116+ (offscreen documents) and Firefox 128+ (MV3 module background).
+- Recalibrate from the settings dialog after changing chair or desk position,
+  or just toggle off and on.

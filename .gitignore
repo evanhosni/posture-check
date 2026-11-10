@@ -151,5 +151,8 @@ vite.config.ts.timestamp-*
 # macOS
 .DS_Store
 
-# MediaPipe wasm runtime, copied from node_modules by scripts/copy-wasm.mjs
-public/wasm
+# Extension build output and generated assets
+dist-firefox
+extension/public/wasm
+extension/public/models
+extension/public/icons

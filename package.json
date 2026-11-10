@@ -1,20 +1,27 @@
 {
   "name": "posture-check",
-  "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
+  "description": "Browser extension that watches your posture through the webcam and alerts you when you slouch.",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ehosni-cognitiv/posture-check.git"
+  },
   "scripts": {
-    "postinstall": "node scripts/copy-wasm.mjs",
-    "start": "vite --open",
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "assets": "node scripts/fetch-assets.mjs && node scripts/make-icons.mjs",
+    "build": "yarn assets && vite build && node scripts/write-manifest.mjs chrome",
+    "build:firefox": "yarn assets && EXT_TARGET=firefox vite build && node scripts/write-manifest.mjs firefox",
+    "dev": "yarn assets && vite build --watch",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@mediapipe/tasks-vision": "^0.10.22"
   },
   "devDependencies": {
+    "@types/chrome": "^0.3.7",
+    "@types/node": "^26.6.6",
     "typescript": "~5.9.3",
     "vite": "^7.1.12"
-  }
+  },
+  "private": true
 }

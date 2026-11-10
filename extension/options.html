@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Posture Check settings</title>
+  </head>
+  <body class="card options">
+    <header class="options-header">
+      <h1>Posture Check</h1>
+      <label class="switch">
+        <input id="enabled" type="checkbox" />
+        <span id="enabledLabel">Off</span>
+      </label>
+    </header>
+
+    <p id="liveStatus" class="status">Off</p>
+    <p id="lastError" class="issue"></p>
+
+    <section class="settings">
+      <label>
+        Sensitivity
+        <input id="sensitivity" type="range" min="1" max="10" step="1" value="5" />
+        <span id="sensitivityValue">5</span>
+      </label>
+      <label>
+        Alert after
+        <input id="hold" type="range" min="2" max="30" step="1" value="5" />
+        <span id="holdValue">5s</span>
+      </label>
+      <label class="checkbox">
+        <input id="sound" type="checkbox" />
+        Audio warning
+      </label>
+      <label class="checkbox">
+        <input id="notifications" type="checkbox" />
+        Desktop notifications
+      </label>
+      <p id="notificationHint" class="hint"></p>
+    </section>
+
+    <section class="controls">
+      <button id="recalibrate" class="primary">Recalibrate now</button>
+      <button id="test">Test alert</button>
+    </section>
+
+    <script type="module" src="/options.ts"></script>
+  </body>
+</html>
