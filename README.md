@@ -49,9 +49,12 @@ yarn build:firefox
 ```
 
 Open `about:debugging#/runtime/this-firefox` → **Load Temporary Add-on…** → pick
-`dist-firefox/manifest.json`. Firefox has no offscreen-document API, so the
-camera can only run in a visible page: switching on opens a small monitor window
-that has to stay open. Temporary add-ons are also dropped on restart.
+`dist-firefox/manifest.json`. Firefox refuses a camera to every background
+context, under both manifest versions, so the camera can only run in a visible
+page. Switching on opens one small window that calibrates and then shrinks to a
+strip in the corner with the status, a Recalibrate button, a settings gear and a
+Turn off button. Closing it stops monitoring. Temporary add-ons are also dropped
+on restart.
 
 ## How it decides posture is bad
 
@@ -91,7 +94,7 @@ extension/
                 notifications and the camera host's lifecycle
   shared/       Settings, message protocol, PostureWatcher-to-worker binding
   offscreen.*   Chrome's invisible background camera host
-  monitor.*     The camera host on Firefox, which has no offscreen document
+  monitor.*     Firefox's whole interface: the camera host, calibration and controls
   options.*     The settings dialog
 extension/icon-source.png  The image every icon size is rendered from
 scripts/        Bundled wasm + model download, icon generation, manifest writing

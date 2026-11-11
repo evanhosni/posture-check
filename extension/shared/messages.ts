@@ -25,6 +25,7 @@ export type HostCommand =
   | { kind: 'host-siren' }
   | { kind: 'host-speak'; phrase: string }
   | { kind: 'host-ping' }
+  | { kind: 'host-recalibrate' }
 
 export type Message = Command | Report | HostCommand
 

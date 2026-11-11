@@ -4,6 +4,7 @@ import {
   DEFAULT_SETTINGS,
   loadState,
   saveBaseline,
+  loadLastError,
   saveLastError,
   saveSettings,
 } from './shared/settings'
@@ -19,6 +20,7 @@ const VOICE_DELAY_MS = 1350
 const BADGE_STARTING = { text: '…', color: '#3f7fe2' }
 const BADGE_BAD = { text: '!', color: '#e2503f' }
 const BADGE_CLEAR = { text: '', color: '#3f7fe2' }
+const BADGE_BROKEN = { text: '×', color: '#9aa3ad' }
 
 /** Voice preference order, mirroring the one the page-side speech synthesis uses. */
 const VOICE_PREFERENCES = [
@@ -50,6 +52,10 @@ chrome.alarms.onAlarm.addListener((alarm) => {
 
 chrome.action.onClicked.addListener(() => void toggle())
 
+// Closing the host window is the other way of saying stop: it is the camera, and leaving
+// the extension on would only have the keepalive alarm open it again a minute later.
+chrome.windows.onRemoved.addListener(() => void closedMonitorWindow())
+
 chrome.runtime.onMessage.addListener((message: Message, _sender, respond) => {
   void handle(message, respond)
   return true
@@ -57,7 +63,32 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, respond) => {
 
 async function toggle() {
   await hydrate()
+
+  // On Firefox the host window is the interface, so while it is running the icon raises it
+  // rather than switching off. Its own power button is what turns the extension off.
+  if (!supportsOffscreen && settings.enabled) {
+    await raiseMonitorWindow()
+    return
+  }
+
   await setEnabled(!settings.enabled)
+}
+
+async function closedMonitorWindow() {
+  if (supportsOffscreen) return
+
+  await hydrate()
+  if (!settings.enabled || (await findTabs(MONITOR_PATH)).length > 0) return
+  await setEnabled(false)
+}
+
+async function raiseMonitorWindow() {
+  const [tab] = await findTabs(MONITOR_PATH)
+  if (tab?.windowId === undefined) {
+    await startCameraHost()
+    return
+  }
+  await chrome.windows.update(tab.windowId, { focused: true, drawAttention: true })
 }
 
 /**
@@ -155,6 +186,15 @@ async function setEnabled(enabled: boolean) {
  * may hold it meanwhile, which is also what lets calibration run with the extension off.
  */
 async function startCalibration() {
+  // On Firefox the host window calibrates in place: it is the camera, so tearing it down
+  // to run a calibration would only mean opening it again a moment later.
+  if (!supportsOffscreen) {
+    if ((await findTabs(MONITOR_PATH)).length > 0) void send({ kind: 'host-recalibrate' })
+    else await openMonitorWindow({ recalibrate: true })
+    await paint()
+    return
+  }
+
   await stopCameraHost()
   await openCalibrationWindow()
   await paint()
@@ -169,8 +209,8 @@ async function finishCalibration(captured: PostureMetrics) {
   // running" off the open window, so the tab has to be gone before it runs.
   await closeWindows(CALIBRATION_PATH)
   // A host left from an earlier attempt can be hung in a way nothing here can see, so a
-  // calibration always builds a fresh one.
-  await stopCameraHost()
+  // calibration always builds a fresh one. The Firefox window just calibrated itself.
+  if (supportsOffscreen) await stopCameraHost()
   await sync()
 }
 
@@ -293,14 +333,14 @@ async function openCalibrationWindow() {
 }
 
 /** Firefox fallback: the camera can only run in a visible page there. */
-async function openMonitorWindow() {
+async function openMonitorWindow({ recalibrate = false } = {}) {
   if ((await findTabs(MONITOR_PATH)).length > 0) return
   await chrome.windows.create({
-    url: `${MONITOR_PATH}?mode=monitor`,
+    url: recalibrate ? `${MONITOR_PATH}?recalibrate` : MONITOR_PATH,
     type: 'popup',
-    width: 420,
-    height: 200,
-    focused: false,
+    width: 380,
+    height: 440,
+    focused: true,
   })
 }
 
@@ -411,6 +451,9 @@ async function badgeState() {
   if (await isCalibrating()) return BADGE_STARTING
   if (!settings.enabled) return BADGE_CLEAR
   if (posture === false) return BADGE_BAD
-  if (baseline && !attached) return BADGE_STARTING
-  return BADGE_CLEAR
+  if (!baseline || attached) return BADGE_CLEAR
+
+  // Starting is a moment; anything longer is a camera that will not come up, and saying
+  // so beats a badge that waits forever. The settings dialog carries the reason.
+  return (await loadLastError()) ? BADGE_BROKEN : BADGE_STARTING
 }

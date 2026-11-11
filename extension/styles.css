@@ -41,10 +41,27 @@ body {
   gap: 12px;
 }
 
+/* Both browsers give this page a panel to fill: Firefox a wide one in about:addons,
+   Chrome a dialog. Filling it beats sitting in a narrow column inside it. */
 .options {
-  width: 340px;
-  padding: 16px 18px 18px;
-  gap: 10px;
+  width: auto;
+  padding: 20px 24px 24px;
+  gap: 14px;
+}
+
+.options .settings {
+  padding: 16px 18px;
+  gap: 14px;
+}
+
+.options .settings label {
+  grid-template-columns: 160px 1fr 40px;
+  font-size: 14px;
+}
+
+.options .controls button {
+  padding: 10px 14px;
+  font-size: 14px;
 }
 
 .options-header {
@@ -65,8 +82,9 @@ h1 {
   font-size: 13px;
 }
 
+/* A utility has to beat whatever display a component sets, wherever it sits in the file. */
 .hidden {
-  display: none;
+  display: none !important;
 }
 
 /* Hints and errors only exist when they have something to say; empty, they take no space. */
@@ -164,8 +182,107 @@ button.primary {
   font-size: 13px;
 }
 
-/* The calibration window: a centered card with a camera preview and a filling bar. */
-.calibrating {
+/* The Firefox window: a calibration card that shrinks to a status strip once watching. */
+/*
+ * The watching strip: picture hard left, controls hard right, message filling whatever is
+ * between them. Every width here is flexible, and the message's basis is zero so its text
+ * can never push the other two around. The window fixes the height, so the square picture
+ * can size off it without the row growing to fit its own contents.
+ */
+.monitor.watching {
+  height: 100vh;
+  padding: 8px 10px;
+  gap: 0;
+  overflow: hidden;
+  /* The calibration card centres its children; the strip has to span the window instead. */
+  align-items: stretch;
+}
+
+.strip {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  height: 100%;
+  min-height: 0;
+}
+
+.strip-icon {
+  height: 84%;
+  aspect-ratio: 1;
+  flex: 0 0 auto;
+  align-self: center;
+  object-fit: contain;
+}
+
+.strip-body {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.strip-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.strip-status {
+  flex: 1 1 0;
+  min-width: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Bare glyphs rather than buttons: the strip is small and a border on each would crowd it. */
+.glyph {
+  flex: 0 0 auto;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--muted);
+}
+
+.glyph svg {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+.glyph .knob {
+  fill: currentColor;
+  stroke: none;
+}
+
+.glyph:hover:not(:disabled) {
+  color: var(--text);
+}
+
+/* Orange reads as running, which is the only state this button is ever seen in. */
+.power {
+  color: var(--accent);
+}
+
+.power:hover:not(:disabled) {
+  color: var(--accent);
+  opacity: 0.75;
+}
+
+/* The calibration card: centered, with a camera preview and a filling bar. */
+.calibrating,
+.monitor {
   align-items: center;
   text-align: center;
   gap: 10px;
@@ -206,4 +323,11 @@ button.primary {
   height: 100%;
   border-radius: 999px;
   background: var(--accent);
+}
+
+#capture {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 100%;
 }
