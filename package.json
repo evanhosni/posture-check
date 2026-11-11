@@ -1,6 +1,6 @@
 {
   "name": "posture-check",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Watches your posture through the webcam and alerts you when you start to slouch",
   "type": "module",
   "repository": {
