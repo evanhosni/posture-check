@@ -16,7 +16,7 @@
     "type": "module"
   },
   "action": {
-    "default_title": "Posture Check \u2014 off",
+    "default_title": "Posture Check",
     "default_icon": {
       "16": "icons/icon16-off.png",
       "32": "icons/icon32-off.png",

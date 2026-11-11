@@ -401,19 +401,10 @@ async function paint() {
       128: `icons/icon128${suffix}.png`,
     },
   })
-  void chrome.action.setTitle({ title: iconTitle() })
-
   const badge = await badgeState()
   void chrome.action.setBadgeText({ text: badge.text })
   void chrome.action.setBadgeBackgroundColor({ color: badge.color })
   if (chrome.action.setBadgeTextColor) void chrome.action.setBadgeTextColor({ color: '#ffffff' })
-}
-
-function iconTitle() {
-  if (!settings.enabled) return 'Posture Check — off'
-  if (!baseline) return 'Posture Check — not calibrated'
-  if (posture === false) return 'Posture Check — bad posture'
-  return 'Posture Check — on'
 }
 
 async function badgeState() {

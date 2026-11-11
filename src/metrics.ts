@@ -7,9 +7,15 @@ const RIGHT_EAR = 8
 const LEFT_SHOULDER = 11
 const RIGHT_SHOULDER = 12
 
-// Pose models still return a skeleton for an empty chair, just a poorly seen one.
-const MIN_VISIBILITY = 0.5
-const MIN_SHOULDER_WIDTH = 0.05
+/**
+ * Pose models return a skeleton for an empty chair too, just an unconfident one, so the
+ * bar for "someone is there" is high. The nose and shoulders stay confident through a
+ * slouch, which is why the threshold can be strict without blinding the thing it watches.
+ */
+const MIN_VISIBILITY = 0.8
+/** A torso narrower than this is a guess about something in the background, not a person. */
+const MIN_SHOULDER_WIDTH = 0.1
+const MAX_SHOULDER_WIDTH = 0.95
 
 /** Deviation from baseline that counts as bad posture at sensitivity 1. */
 export const LIMITS = {
@@ -40,7 +46,10 @@ export function measure(landmarks: NormalizedLandmark[]): PostureMetrics | null 
     leftShoulder.x - rightShoulder.x,
     leftShoulder.y - rightShoulder.y,
   )
-  if (shoulderWidth < MIN_SHOULDER_WIDTH) return null
+  if (shoulderWidth < MIN_SHOULDER_WIDTH || shoulderWidth > MAX_SHOULDER_WIDTH) return null
+
+  // A head below the shoulders is not a posture, it is a bad guess.
+  if (nose.y > Math.max(leftShoulder.y, rightShoulder.y)) return null
 
   const shoulderMidX = (leftShoulder.x + rightShoulder.x) / 2
   const shoulderMidY = (leftShoulder.y + rightShoulder.y) / 2

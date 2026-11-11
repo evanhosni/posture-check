@@ -15,6 +15,12 @@ import type {
 
 /** Frames without a person before the bad-posture run is abandoned. */
 const ABSENT_FRAMES = 3
+/**
+ * Frames of an unbroken sighting before posture is scored again. A single frame of a
+ * hallucinated skeleton is enough to fire an alert at an empty chair, and that is what
+ * this waits out.
+ */
+const PRESENT_FRAMES = 5
 /** How long past its window a calibration waits for someone to appear before giving up. */
 const CALIBRATION_GRACE_MS = 5000
 /** Ticks of a frozen feed before the element is nudged back into playing. */
@@ -63,6 +69,7 @@ export class PostureWatcher {
 
   private wasGood: boolean | null = null
   private absentStreak = 0
+  private presentStreak = 0
   private stalledTicks = 0
   private badSince = 0
   private goodSince = 0
@@ -309,14 +316,17 @@ export class PostureWatcher {
         this.abandonCalibration(new Error('Calibration needs you in view of the camera'))
       }
       // An empty chair is not bad posture: drop the run so nothing is pending on return.
+      this.presentStreak = 0
       if (this.absentStreak === ABSENT_FRAMES) this.resetRun()
       this.emitter.emit('frame', { metrics: null, landmarks, verdict: null, absent: true })
       return
     }
     this.absentStreak = 0
+    this.presentStreak += 1
 
+    const settled = this.presentStreak >= PRESENT_FRAMES
     const verdict =
-      this.monitoring && this.baselineMetrics
+      settled && this.monitoring && this.baselineMetrics
         ? evaluate(this.baselineMetrics, this.current, this.options.sensitivity)
         : null
 
@@ -397,6 +407,7 @@ export class PostureWatcher {
   private resetRun() {
     this.wasGood = null
     this.absentStreak = 0
+    this.presentStreak = 0
     this.badSince = 0
     this.goodSince = 0
     this.lastAlertAt = 0
