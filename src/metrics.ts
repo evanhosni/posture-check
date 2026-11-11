@@ -8,7 +8,7 @@ const LEFT_SHOULDER = 11
 const RIGHT_SHOULDER = 12
 
 // Pose models still return a skeleton for an empty chair, just a poorly seen one.
-const MIN_VISIBILITY = 0.7
+const MIN_VISIBILITY = 0.5
 const MIN_SHOULDER_WIDTH = 0.05
 
 /** Deviation from baseline that counts as bad posture at sensitivity 1. */
@@ -26,11 +26,16 @@ export const MESSAGES = {
   headOffset: 'Head drifting off center. Square up to the screen.',
 }
 
+/**
+ * Presence rests on the nose and the shoulders alone. The ears are a sharper reference for
+ * neck length, but the model's confidence in them collapses exactly when posture goes bad
+ * — head down, head turned — so they are measured when offered and never required.
+ */
 export function measure(landmarks: NormalizedLandmark[]): PostureMetrics | null {
-  const points = [NOSE, LEFT_EAR, RIGHT_EAR, LEFT_SHOULDER, RIGHT_SHOULDER].map((i) => landmarks[i])
+  const points = [NOSE, LEFT_SHOULDER, RIGHT_SHOULDER].map((i) => landmarks[i])
   if (points.some((point) => !point || (point.visibility ?? 1) < MIN_VISIBILITY)) return null
 
-  const [nose, leftEar, rightEar, leftShoulder, rightShoulder] = points
+  const [nose, leftShoulder, rightShoulder] = points
   const shoulderWidth = Math.hypot(
     leftShoulder.x - rightShoulder.x,
     leftShoulder.y - rightShoulder.y,
@@ -39,14 +44,22 @@ export function measure(landmarks: NormalizedLandmark[]): PostureMetrics | null 
 
   const shoulderMidX = (leftShoulder.x + rightShoulder.x) / 2
   const shoulderMidY = (leftShoulder.y + rightShoulder.y) / 2
-  const earMidY = (leftEar.y + rightEar.y) / 2
+  const ears = earMidY(landmarks)
 
   return {
-    neckRatio: (shoulderMidY - earMidY) / shoulderWidth,
+    neckRatio: (shoulderMidY - nose.y) / shoulderWidth,
+    earNeckRatio: ears === null ? null : (shoulderMidY - ears) / shoulderWidth,
     shoulderWidth,
     shoulderSlope: (leftShoulder.y - rightShoulder.y) / shoulderWidth,
     headOffset: (nose.x - shoulderMidX) / shoulderWidth,
   }
+}
+
+/** The ears' midpoint, when the model is confident about both of them. */
+function earMidY(landmarks: NormalizedLandmark[]) {
+  const ears = [landmarks[LEFT_EAR], landmarks[RIGHT_EAR]]
+  if (ears.some((ear) => !ear || (ear.visibility ?? 1) < MIN_VISIBILITY)) return null
+  return (ears[0].y + ears[1].y) / 2
 }
 
 export function smooth(
@@ -57,6 +70,7 @@ export function smooth(
   if (!previous) return next
   return {
     neckRatio: blend(previous.neckRatio, next.neckRatio, weight),
+    earNeckRatio: blendOptional(previous.earNeckRatio, next.earNeckRatio, weight),
     shoulderWidth: blend(previous.shoulderWidth, next.shoulderWidth, weight),
     shoulderSlope: blend(previous.shoulderSlope, next.shoulderSlope, weight),
     headOffset: blend(previous.headOffset, next.headOffset, weight),
@@ -64,6 +78,7 @@ export function smooth(
 }
 
 export function average(samples: PostureMetrics[]): PostureMetrics {
+  const withEars = samples.filter((sample) => sample.earNeckRatio !== null)
   const total = samples.reduce(
     (sum, sample) => ({
       neckRatio: sum.neckRatio + sample.neckRatio,
@@ -75,6 +90,11 @@ export function average(samples: PostureMetrics[]): PostureMetrics {
   )
   return {
     neckRatio: total.neckRatio / samples.length,
+    // A baseline built from a handful of glimpses of the ears is not worth comparing to.
+    earNeckRatio:
+      withEars.length >= samples.length / 2
+        ? withEars.reduce((sum, sample) => sum + sample.earNeckRatio!, 0) / withEars.length
+        : null,
     shoulderWidth: total.shoulderWidth / samples.length,
     shoulderSlope: total.shoulderSlope / samples.length,
     headOffset: total.headOffset / samples.length,
@@ -87,19 +107,36 @@ export function evaluate(
   sensitivity = 1,
 ): PostureVerdict {
   const issues: PostureIssue[] = []
+  let strain = 0
+
   const add = (kind: keyof typeof LIMITS, deviation: number) => {
     const limit = LIMITS[kind] / sensitivity
-    if (deviation > limit) issues.push({ kind, message: MESSAGES[kind], severity: deviation / limit })
+    const severity = deviation / limit
+    strain = Math.max(strain, severity)
+    if (severity > 1) issues.push({ kind, message: MESSAGES[kind], severity })
   }
 
-  add('slouch', baseline.neckRatio - current.neckRatio)
+  add('slouch', headDrop(baseline, current))
   add('lean', current.shoulderWidth / baseline.shoulderWidth - 1)
   add('shoulderSlope', Math.abs(current.shoulderSlope - baseline.shoulderSlope))
   add('headOffset', Math.abs(current.headOffset - baseline.headOffset))
 
-  return { good: issues.length === 0, issues }
+  return { good: issues.length === 0, issues, strain }
+}
+
+/** Ears when both readings have them, nose otherwise: the two scales are not comparable. */
+function headDrop(baseline: PostureMetrics, current: PostureMetrics) {
+  if (baseline.earNeckRatio !== null && current.earNeckRatio !== null) {
+    return baseline.earNeckRatio - current.earNeckRatio
+  }
+  return baseline.neckRatio - current.neckRatio
 }
 
 function blend(a: number, b: number, weight: number) {
   return a * (1 - weight) + b * weight
+}
+
+function blendOptional(a: number | null, b: number | null, weight: number) {
+  if (b === null) return null
+  return a === null ? b : blend(a, b, weight)
 }

@@ -19,19 +19,23 @@ yarn build
 There is no page and no panel. The toolbar icon is the switch:
 
 - **Grayed out** — off. This is the default; nothing runs.
-- **Click it** — a small window opens in the middle of the screen reading
-  "Calibrating posture / Sit up straight." with a bar that fills over five
+- **Click it** — a window opens in the middle of the screen reading "Calibrating
+  posture / Sit up straight.", showing the camera and a bar that fills over five
   seconds, then closes itself.
+- **Blue `…` badge** — calibrating, or loading the pose model and opening the
+  camera.
 - **In color** — on and watching. Click again to turn it off.
 - **Red `!` badge** — your posture has gone bad right now, whether or not the
   alert delay has elapsed yet.
 
-The first time it is switched on, a small window asks for camera access once and
-closes itself; an offscreen document cannot raise that prompt on its own.
+The calibration window is where camera access is granted. It asks every time it
+opens, hands the camera straight back, and nothing starts measuring until it has
+been allowed — an offscreen document cannot raise that prompt itself.
+**Recalibrate now** works with the extension switched off.
 
 If Chrome refuses to open the camera from the offscreen document, the extension
-falls back to running it in a small background window, which always works, and
-says so. The settings dialog shows the error that caused it.
+reports the error in the settings dialog and keeps retrying rather than opening
+a window for it.
 
 Settings live in a dialog: right-click the icon → **Options**. Sensitivity
 (1-10, default 5), the alert delay (default 5s), the sounds, desktop
@@ -87,14 +91,15 @@ extension/
                 notifications and the camera host's lifecycle
   shared/       Settings, message protocol, PostureWatcher-to-worker binding
   offscreen.*   Chrome's invisible background camera host
-  monitor.*     One-time camera permission window; the camera host on Firefox
+  monitor.*     The camera host on Firefox, which has no offscreen document
   options.*     The settings dialog
 extension/icon-source.png  The image every icon size is rendered from
 scripts/        Bundled wasm + model download, icon generation, manifest writing
 ```
 
-The camera only runs while the extension is switched on, in the offscreen
-document on Chrome and in the monitor window on Firefox.
+Only one place holds the camera at a time: the calibration window while it is
+open, otherwise the offscreen document on Chrome and the monitor window on
+Firefox.
 
 ## Development
 

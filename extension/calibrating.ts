@@ -1,40 +1,75 @@
-import type { Message } from './shared/messages'
+import { drawPose } from '../src/index'
+import { element } from './shared/dom'
+import { createWatcher } from './shared/host'
+import { send } from './shared/messages'
 import { CALIBRATION_SECONDS } from './shared/settings'
 import './styles.css'
 
-/** Closes itself if calibration never reports back, so the window cannot be orphaned. */
-const SAFETY_MARGIN_MS = 8000
-/** Just enough easing to smooth the gaps between ticks without lagging behind them. */
+/** Just enough easing to smooth the gaps between detections without lagging behind them. */
 const BAR_EASING_MS = 120
 
+const preview = element<HTMLVideoElement>('preview')
+const overlay = element<HTMLCanvasElement>('overlay')
+const status = element<HTMLParagraphElement>('status')
+const allowButton = element<HTMLButtonElement>('allow')
 const bar = element<HTMLDivElement>('bar')
-const seconds = Number(new URLSearchParams(location.search).get('seconds')) || CALIBRATION_SECONDS
+const context = overlay.getContext('2d')!
 
 bar.style.transition = `width ${BAR_EASING_MS}ms linear`
 centerOnScreen()
 
-// The bar tracks the monitor's own progress rather than a local animation, so it cannot
-// run ahead of a calibration that started late or stalled.
-chrome.runtime.onMessage.addListener((message: Message) => {
-  if (message.kind === 'monitor-calibrating') {
-    bar.style.width = `${Math.round(Math.min(1, Math.max(0, message.progress)) * 100)}%`
-  }
-  if (message.kind === 'monitor-calibrated') {
-    bar.style.width = '100%'
-    window.close()
-  }
+/**
+ * This window owns the camera for the length of a calibration. It is the only context
+ * that can raise the permission prompt, and running the capture here means the picture
+ * on screen is the one being measured.
+ */
+const watcher = createWatcher({ video: preview })
+
+watcher.on('calibrating', ({ progress }) => {
+  bar.style.width = `${Math.round(Math.min(1, Math.max(0, progress)) * 100)}%`
 })
 
-setTimeout(() => window.close(), seconds * 1000 + SAFETY_MARGIN_MS)
+watcher.on('frame', ({ landmarks }) => {
+  if (preview.videoWidth && overlay.width !== preview.videoWidth) {
+    overlay.width = preview.videoWidth
+    overlay.height = preview.videoHeight
+  }
+  drawPose(context, landmarks, { color: '#f2794b' })
+})
+
+allowButton.addEventListener('click', () => void calibrate())
+void calibrate()
+
+async function calibrate() {
+  allowButton.disabled = true
+  status.textContent = 'Waiting for camera access…'
+
+  try {
+    await watcher.start()
+    allowButton.classList.add('hidden')
+    status.textContent = 'Sit up straight.'
+
+    const baseline = await watcher.calibrate(CALIBRATION_SECONDS * 1000)
+    bar.style.width = '100%'
+
+    // Release the camera and wait for the baseline to be acknowledged: closing this window
+    // with that message still in flight would throw the calibration away. The worker
+    // normally closes this window itself once it has stored it.
+    watcher.stop()
+    await send({ kind: 'calibrated', baseline })
+    window.close()
+  } catch (error) {
+    const message = (error as Error).message
+    status.textContent = message
+    watcher.stop()
+    allowButton.classList.remove('hidden')
+    allowButton.disabled = false
+    await send({ kind: 'calibration-failed', message })
+  }
+}
 
 function centerOnScreen() {
   const left = Math.round((screen.availWidth - window.outerWidth) / 2)
   const top = Math.round((screen.availHeight - window.outerHeight) / 3)
   void chrome.windows.update(chrome.windows.WINDOW_ID_CURRENT, { left, top })
-}
-
-function element<T extends HTMLElement>(id: string) {
-  const node = document.getElementById(id)
-  if (!node) throw new Error(`Missing element #${id}`)
-  return node as T
 }

@@ -15,6 +15,12 @@ import type {
 
 /** Frames without a person before the bad-posture run is abandoned. */
 const ABSENT_FRAMES = 3
+/** How long past its window a calibration waits for someone to appear before giving up. */
+const CALIBRATION_GRACE_MS = 5000
+/** Ticks of a frozen feed before the element is nudged back into playing. */
+const STALL_TICKS = 20
+/** A start that has not finished by now is stuck, and silence is worse than an error. */
+const START_TIMEOUT_MS = 20000
 
 const DEFAULTS = {
   sensitivity: 1,
@@ -57,6 +63,7 @@ export class PostureWatcher {
 
   private wasGood: boolean | null = null
   private absentStreak = 0
+  private stalledTicks = 0
   private badSince = 0
   private goodSince = 0
   private lastAlertAt = 0
@@ -99,15 +106,22 @@ export class PostureWatcher {
     if (this.running) return
     try {
       this.setStatus('loading')
-      this.landmarker ??= await createPoseLandmarker({
-        wasmPath: this.options.wasmPath,
-        modelPath: this.options.modelPath,
-      })
+      this.landmarker ??= await deadline(
+        createPoseLandmarker({
+          wasmPath: this.options.wasmPath,
+          modelPath: this.options.modelPath,
+          delegate: this.options.delegate,
+        }),
+        'Loading the pose model timed out',
+      )
 
       if (!this.stream) {
         this.stream = this.options.stream ?? null
         if (!this.stream) {
-          this.stream = await navigator.mediaDevices.getUserMedia(this.options.constraints!)
+          this.stream = await deadline(
+            navigator.mediaDevices.getUserMedia(this.options.constraints!),
+            'Opening the camera timed out',
+          )
           this.ownsStream = true
         }
       }
@@ -264,8 +278,15 @@ export class PostureWatcher {
 
   private detect() {
     if (!this.landmarker || this.video.readyState < 2) return
+
     // A frame the camera has not replaced yet would be scored twice, so wait for the next.
-    if (this.video.currentTime === this.lastVideoTime) return
+    // A feed that stays frozen has been paused by the browser, so nudge it back to life.
+    if (this.video.currentTime === this.lastVideoTime) {
+      this.stalledTicks += 1
+      if (this.stalledTicks % STALL_TICKS === 0) void this.video.play().catch(() => undefined)
+      return
+    }
+    this.stalledTicks = 0
 
     const now = performance.now()
     const elapsed = this.lastDetectAt === 0 ? 0 : now - this.lastDetectAt
@@ -284,6 +305,9 @@ export class PostureWatcher {
 
     if (!this.current) {
       this.absentStreak += 1
+      if (this.calibration && now > this.calibration.endsAt + CALIBRATION_GRACE_MS) {
+        this.abandonCalibration(new Error('Calibration needs you in view of the camera'))
+      }
       // An empty chair is not bad posture: drop the run so nothing is pending on return.
       if (this.absentStreak === ABSENT_FRAMES) this.resetRun()
       this.emitter.emit('frame', { metrics: null, landmarks, verdict: null, absent: true })
@@ -363,6 +387,13 @@ export class PostureWatcher {
     this.emitter.emit('alert', alert)
   }
 
+  private abandonCalibration(error: Error) {
+    const calibration = this.calibration
+    this.calibration = null
+    this.setStatus(this.monitoring ? 'watching' : 'ready')
+    calibration?.reject(error)
+  }
+
   private resetRun() {
     this.wasGood = null
     this.absentStreak = 0
@@ -384,6 +415,16 @@ export class PostureWatcher {
 
 export function createPostureWatcher(options?: PostureWatcherOptions) {
   return new PostureWatcher(options)
+}
+
+/** Turns a step that never settles into one that fails out loud. */
+function deadline<T>(work: Promise<T>, message: string) {
+  return Promise.race([
+    work,
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error(message)), START_TIMEOUT_MS)
+    }),
+  ])
 }
 
 function createHiddenVideo() {

@@ -6,7 +6,12 @@
   </head>
   <body class="card calibrating">
     <h1>Calibrating posture</h1>
-    <p class="status">Sit up straight.</p>
+    <p id="status" class="status">Sit up straight.</p>
+    <div class="preview">
+      <video id="preview" autoplay playsinline muted></video>
+      <canvas id="overlay"></canvas>
+    </div>
+    <button id="allow" class="primary hidden">Allow camera access</button>
     <div class="meter"><div id="bar" class="meter-fill"></div></div>
     <script type="module" src="/calibrating.ts"></script>
   </body>

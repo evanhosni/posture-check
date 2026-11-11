@@ -1,13 +1,11 @@
-import type { BackgroundState, Message } from './shared/messages'
+import type { PostureMetrics } from '../src/index'
+import { send, type BackgroundState, type HostSettings, type Message } from './shared/messages'
 import {
-  CALIBRATION_SECONDS,
   DEFAULT_SETTINGS,
   loadState,
-  readStorage,
   saveBaseline,
+  saveLastError,
   saveSettings,
-  writeStorage,
-  type Settings,
 } from './shared/settings'
 
 const OFFSCREEN_PATH = 'offscreen.html'
@@ -17,8 +15,10 @@ const KEEPALIVE_ALARM = 'posture-check-keepalive'
 const ALERT_PHRASE = 'Bad posture alert'
 /** Mirrors VOICE_DELAY_MS in src/alerts.ts; the worker cannot import that DOM-only module. */
 const VOICE_DELAY_MS = 1350
-/** How long the offscreen document gets to open the camera before the window fallback. */
-const ATTACH_TIMEOUT_MS = 12000
+
+const BADGE_STARTING = { text: '…', color: '#3f7fe2' }
+const BADGE_BAD = { text: '!', color: '#e2503f' }
+const BADGE_CLEAR = { text: '', color: '#3f7fe2' }
 
 /** Voice preference order, mirroring the one the page-side speech synthesis uses. */
 const VOICE_PREFERENCES = [
@@ -32,26 +32,18 @@ const VOICE_PREFERENCES = [
 /** Chrome runs the camera in an offscreen document; Firefox has no such API. */
 const supportsOffscreen = typeof chrome.offscreen !== 'undefined'
 
-const state: BackgroundState = {
-  settings: DEFAULT_SETTINGS,
-  baseline: null,
-  notificationPermission: 'granted',
-  status: 'idle',
-  good: null,
-  issues: [],
-  monitoring: false,
-}
-
-const PENDING_KEY = 'calibrationPending'
-
-let permissionWindowId: number | null = null
-
-// The settings dialog is reached through the browser's own Options entry on the icon.
-chrome.runtime.onInstalled.addListener(() => void hydrate())
-
-chrome.runtime.onStartup.addListener(() => void sync())
+let settings = DEFAULT_SETTINGS
+let baseline: PostureMetrics | null = null
+/** Null until a host reports, and whenever nobody is in front of the camera. */
+let posture: boolean | null = null
+let attached = false
+let voiceName: string | undefined
 
 chrome.alarms.create(KEEPALIVE_ALARM, { periodInMinutes: 1 })
+
+chrome.runtime.onInstalled.addListener(() => void sync())
+chrome.runtime.onStartup.addListener(() => void sync())
+
 chrome.alarms.onAlarm.addListener((alarm) => {
   if (alarm.name === KEEPALIVE_ALARM) void sync()
 })
@@ -65,265 +57,216 @@ chrome.runtime.onMessage.addListener((message: Message, _sender, respond) => {
 
 async function toggle() {
   await hydrate()
-  await setEnabled(!state.settings.enabled)
+  await setEnabled(!settings.enabled)
 }
 
-async function setEnabled(enabled: boolean) {
-  state.settings = await saveSettings({ enabled })
-  paintIcon()
-
-  if (!enabled) {
-    await setCalibrationPending(false)
-    clearCalibrationUi()
-    await sync()
-    return
-  }
-
-  await setCalibrationPending(true)
-  await sync()
-}
-
+/**
+ * Commands from the settings dialog are answered with the state it renders; reports from
+ * the camera host and the calibration window are answered with whatever the sender needs.
+ */
 async function handle(message: Message, respond: (value: unknown) => void) {
   await hydrate()
+  respond(await route(message))
+}
 
+async function route(message: Message): Promise<unknown> {
   switch (message.kind) {
     case 'get-state':
-      respond(state)
-      return
+      return dialogState()
 
     case 'set-settings':
-      state.settings = await saveSettings(message.settings)
-      broadcastSettings()
-      paintIcon()
-      respond(state)
-      return
+      settings = await saveSettings(message.settings)
+      void send({ kind: 'host-settings', settings, baseline })
+      await paint()
+      return dialogState()
 
     case 'set-enabled':
       await setEnabled(message.enabled)
-      respond(state)
-      return
+      return dialogState()
 
     case 'recalibrate':
-      await setCalibrationPending(true)
-      if (await hasMonitor()) startCalibration()
-      else await sync()
-      respond(state)
-      return
+      await startCalibration()
+      return dialogState()
 
     case 'verify-notifications':
-      state.notificationPermission = await notificationPermission()
       // A notification is the only honest test: the OS can silently drop them.
       notify('Notifications are on', ['Posture alerts will appear here.'])
-      respond(state)
-      return
+      return dialogState()
 
-    case 'test-alert': {
-      const spawned = await ensureAudioHost()
-      // A freshly spawned host plays on load; an existing monitor has to be asked.
-      if (!spawned) {
-        void chrome.runtime.sendMessage({ kind: 'monitor-test-alert' }).catch(() => undefined)
-      }
+    case 'test-alert':
+      await playTestAlert()
       speakWarning()
       notify('Posture alert test', ['This is what an alert looks like.'])
-      respond(state)
-      return
-    }
+      return dialogState()
 
-    case 'permission-granted':
-      await writeStorage({ cameraGranted: true })
-      closePermissionWindow()
-      await sync()
-      respond(state)
-      return
+    case 'host-attached':
+      attached = true
+      await saveLastError(null)
+      await paint()
+      // chrome.storage does not exist in an offscreen document, so the host is told.
+      return { settings, baseline } satisfies HostSettings
 
-    case 'monitor-attached':
-      state.monitoring = true
-      await writeStorage({ monitorAttachedAt: Date.now(), lastError: null })
-      if ((await isCalibrationPending()) || !state.baseline) startCalibration()
-      respond(state)
-      return
+    case 'host-posture':
+      // Posture only ever comes from a running host, which is the proof of life the
+      // badge needs after the worker has been torn down and revived.
+      attached = true
+      posture = message.good
+      await paint()
+      return null
 
-    case 'monitor-status':
-      state.status = message.status
-      respond(state)
-      return
-
-    case 'monitor-calibrated':
-      await setCalibrationPending(false)
-      state.baseline = message.baseline
-      await saveBaseline(message.baseline)
-      clearCalibrationUi()
-      respond(state)
-      return
-
-    case 'monitor-absent':
-      state.good = null
-      state.issues = []
-      paintBadge()
-      respond(state)
-      return
-
-    case 'monitor-posture':
-      state.good = message.good
-      state.issues = message.issues
-      paintBadge()
-      respond(state)
-      return
-
-    case 'monitor-alert':
+    case 'host-alert':
       speakWarning()
       notify('Bad Posture Alert', message.issues.map((issue) => issue.message))
-      respond(state)
-      return
+      return null
 
-    case 'monitor-error':
-      await handleMonitorError(message.message)
-      respond(state)
-      return
+    case 'host-error':
+      await reportError(message.message)
+      return null
+
+    case 'calibrated':
+      await finishCalibration(message.baseline)
+      return null
+
+    case 'calibration-failed':
+      await failCalibration(message.message)
+      return null
 
     default:
-      respond(state)
+      return null
   }
 }
 
-let hydrated = false
+async function setEnabled(enabled: boolean) {
+  settings = await saveSettings({ enabled })
 
-async function hydrate() {
-  if (hydrated) return
-  const stored = await loadState()
-  state.settings = stored.settings
-  state.baseline = stored.baseline
-  hydrated = true
-  pickVoice()
-  paintIcon()
-  await sync()
-}
-
-/** Brings the camera host in line with the current settings. */
-async function sync() {
-  await hydrate()
-
-  if (!state.settings.enabled) {
-    await teardownMonitor()
+  if (!enabled) {
+    await closeWindows(CALIBRATION_PATH)
+    await stopCameraHost()
+    await paint()
     return
   }
 
+  // Switching on always recalibrates, so the baseline matches how you are sitting now.
+  await startCalibration()
+}
+
+/**
+ * Hands the camera to the calibration window for the length of a capture. Nothing else
+ * may hold it meanwhile, which is also what lets calibration run with the extension off.
+ */
+async function startCalibration() {
+  await stopCameraHost()
+  await openCalibrationWindow()
+  await paint()
+}
+
+async function finishCalibration(captured: PostureMetrics) {
+  baseline = captured
+  await saveBaseline(captured)
+  await saveLastError(null)
+
+  // Closed from here rather than left to the window: sync reads "a calibration is
+  // running" off the open window, so the tab has to be gone before it runs.
+  await closeWindows(CALIBRATION_PATH)
+  // A host left from an earlier attempt can be hung in a way nothing here can see, so a
+  // calibration always builds a fresh one.
+  await stopCameraHost()
+  await sync()
+}
+
+async function failCalibration(message: string) {
+  await saveLastError(message)
+  // Without a baseline there is nothing to watch against, so stay off rather than
+  // reopening the calibration window on a loop.
+  if (!baseline) settings = await saveSettings({ enabled: false })
+  await paint()
+}
+
+/** Brings the camera host in line with the settings, and repaints what changed. */
+async function sync() {
+  await hydrate()
+  await reconcileCameraHost()
+  await paint()
+}
+
+async function reconcileCameraHost() {
+  // The calibration window owns the camera while it is open, and only one context may.
+  if (await isCalibrating()) return
+
+  if (settings.enabled && baseline) {
+    await startCameraHost()
+    return
+  }
+
+  await stopCameraHost()
+}
+
+/** Brings up whichever context holds the camera, and keeps it the only one that does. */
+async function startCameraHost() {
   if (!supportsOffscreen) {
     await openMonitorWindow()
     return
   }
 
-  if (!(await cameraGranted())) {
-    await openPermissionWindow()
-    return
+  // An existing document proves nothing: one that is hung holds no camera and reports
+  // nothing, which from here looks exactly like one that is working. So ask it.
+  if (await hasOffscreen()) {
+    if (await hostAnswers()) return
+    await chrome.offscreen.closeDocument()
   }
 
-  if (await cameraNeedsWindow()) {
-    await openMonitorWindow()
-    return
-  }
-
-  if (!(await hasOffscreen())) {
-    await writeStorage({ offscreenCreatedAt: Date.now(), monitorAttachedAt: 0 })
+  attached = false
+  try {
     await chrome.offscreen.createDocument({
       url: OFFSCREEN_PATH,
       reasons: [chrome.offscreen.Reason.USER_MEDIA, chrome.offscreen.Reason.AUDIO_PLAYBACK],
       justification: 'Watches posture through the webcam and plays the alert sound.',
     })
-    setTimeout(() => void checkAttached(), ATTACH_TIMEOUT_MS)
-    return
+  } catch (error) {
+    // Whatever went wrong here is invisible otherwise: no document means no reports.
+    await reportError(`Could not start the camera: ${(error as Error).message}`)
   }
+}
 
-  await checkAttached()
+async function stopCameraHost() {
+  attached = false
+  posture = null
+  if (supportsOffscreen && (await hasOffscreen())) await chrome.offscreen.closeDocument()
+  await closeWindows(MONITOR_PATH)
+}
+
+/** Only a camera host answers this, so silence means there is no healthy one. */
+async function hostAnswers() {
+  return (await send({ kind: 'host-ping' })) === true
 }
 
 /**
- * Chrome will not always open a camera from an offscreen document. When it does not, the
- * monitor falls back to a small window, which always can.
+ * A host that cannot run is replaced rather than papered over with a visible window: the
+ * keepalive alarm builds a fresh one. The Firefox window shows the error itself, so only
+ * the invisible host is torn down here.
  */
-async function checkAttached() {
-  const stored = await readStorage(['offscreenCreatedAt', 'monitorAttachedAt'])
-  const created = (stored.offscreenCreatedAt as number | undefined) ?? 0
-  const attached = (stored.monitorAttachedAt as number | undefined) ?? 0
-  if (created === 0 || attached >= created) return
-  if (Date.now() - created < ATTACH_TIMEOUT_MS) return
-
-  await useWindowFallback('The camera would not start in the background.')
-}
-
-async function useWindowFallback(reason: string) {
-  await writeStorage({ cameraFallback: true, lastError: reason })
+async function reportError(message: string) {
+  attached = false
+  await saveLastError(message)
   if (supportsOffscreen && (await hasOffscreen())) await chrome.offscreen.closeDocument()
-  await openMonitorWindow()
-}
-
-async function cameraNeedsWindow() {
-  const stored = await readStorage(['cameraFallback'])
-  return stored.cameraFallback === true
-}
-
-async function teardownMonitor() {
-  state.monitoring = false
-  state.status = 'idle'
-  state.good = null
-  paintBadge()
-
-  if (supportsOffscreen && (await hasOffscreen())) await chrome.offscreen.closeDocument()
-  await closeCalibrationWindow()
-  await closeMonitorWindows()
-}
-
-async function handleMonitorError(message: string) {
-  state.status = 'error'
-  paintBadge()
-  await writeStorage({ lastError: message })
-
-  if (/denied|notallowed|permission/i.test(message)) {
-    await writeStorage({ cameraGranted: false })
-    if (supportsOffscreen && (await hasOffscreen())) await chrome.offscreen.closeDocument()
-    await openPermissionWindow()
-    return
-  }
-
-  // A camera that fails anywhere but a window gets one.
-  if (supportsOffscreen && !(await cameraNeedsWindow())) {
-    await useWindowFallback(message)
-  }
-}
-
-async function cameraGranted() {
-  const stored = await readStorage(['cameraGranted'])
-  return stored.cameraGranted === true
-}
-
-async function setCalibrationPending(pending: boolean) {
-  await writeStorage({ [PENDING_KEY]: pending })
-}
-
-async function isCalibrationPending() {
-  const stored = await readStorage([PENDING_KEY])
-  return stored[PENDING_KEY] === true
-}
-
-/** The worker restarts freely, so monitor presence is read back rather than remembered. */
-async function hasMonitor() {
-  if (supportsOffscreen) return hasOffscreen()
-  const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL(`${MONITOR_PATH}*`) })
-  return tabs.length > 0
+  await paint()
 }
 
 /**
- * Test alerts have to work with the camera off, so this spins up a sound-only offscreen
- * document when no monitor is already running. It closes itself once the alert is done.
+ * The siren needs a document. With nothing running, a sound-only offscreen document is
+ * spun up; it plays on load and closes itself, so the test works with the camera off.
  */
-async function ensureAudioHost() {
-  if (!supportsOffscreen || (await hasOffscreen())) return false
-  await chrome.offscreen.createDocument({
-    url: `${OFFSCREEN_PATH}?mode=audio`,
-    reasons: [chrome.offscreen.Reason.AUDIO_PLAYBACK],
-    justification: 'Plays the posture alert sound.',
-  })
-  return true
+async function playTestAlert() {
+  if (supportsOffscreen && !(await hasOffscreen())) {
+    await chrome.offscreen.createDocument({
+      url: `${OFFSCREEN_PATH}?mode=audio`,
+      reasons: [chrome.offscreen.Reason.AUDIO_PLAYBACK],
+      justification: 'Plays the posture alert sound.',
+    })
+    return
+  }
+
+  void send({ kind: 'host-siren' })
 }
 
 async function hasOffscreen() {
@@ -331,27 +274,27 @@ async function hasOffscreen() {
   return contexts.length > 0
 }
 
-async function openPermissionWindow() {
-  if (permissionWindowId !== null) return
-  const created = await chrome.windows.create({
-    url: `${MONITOR_PATH}?mode=permission`,
-    type: 'popup',
-    width: 420,
-    height: 260,
-  })
-  permissionWindowId = created?.id ?? null
-}
+/** A centered window, rather than a badge, so calibration is visible outside the browser. */
+async function openCalibrationWindow() {
+  if (await isCalibrating()) return
 
-function closePermissionWindow() {
-  if (permissionWindowId === null) return
-  void chrome.windows.remove(permissionWindowId).catch(() => undefined)
-  permissionWindowId = null
+  const created = await chrome.windows.create({
+    url: CALIBRATION_PATH,
+    type: 'popup',
+    width: 380,
+    height: 400,
+    focused: true,
+  })
+
+  // The settings dialog is modal over its own window, so make sure this lands in front.
+  if (created?.id !== undefined) {
+    void chrome.windows.update(created.id, { focused: true, drawAttention: true })
+  }
 }
 
 /** Firefox fallback: the camera can only run in a visible page there. */
 async function openMonitorWindow() {
-  const existing = await chrome.tabs.query({ url: chrome.runtime.getURL(`${MONITOR_PATH}*`) })
-  if (existing.length > 0) return
+  if ((await findTabs(MONITOR_PATH)).length > 0) return
   await chrome.windows.create({
     url: `${MONITOR_PATH}?mode=monitor`,
     type: 'popup',
@@ -361,59 +304,53 @@ async function openMonitorWindow() {
   })
 }
 
-async function closeMonitorWindows() {
-  const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL(`${MONITOR_PATH}*`) })
-  for (const tab of tabs) {
-    if (tab.id !== undefined) void chrome.tabs.remove(tab.id).catch(() => undefined)
-  }
-  permissionWindowId = null
+/** The open window is the only record that a calibration is running; a worker is not. */
+async function isCalibrating() {
+  return (await findTabs(CALIBRATION_PATH)).length > 0
 }
 
-function startCalibration() {
-  void openCalibrationWindow()
-  void chrome.runtime
-    .sendMessage({ kind: 'monitor-calibrate', seconds: CALIBRATION_SECONDS })
-    .catch(() => undefined)
+function findTabs(path: string) {
+  return chrome.tabs.query({ url: chrome.runtime.getURL(`${path}*`) })
 }
 
-/** A centered window, rather than a badge, so calibration is visible outside the browser. */
-async function openCalibrationWindow() {
-  const url = `${CALIBRATION_PATH}?seconds=${CALIBRATION_SECONDS}`
-  const existing = await chrome.tabs.query({ url: chrome.runtime.getURL(`${CALIBRATION_PATH}*`) })
-  if (existing.length > 0) return
-
-  await chrome.windows.create({ url, type: 'popup', width: 360, height: 190, focused: true })
-}
-
-async function closeCalibrationWindow() {
-  const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL(`${CALIBRATION_PATH}*`) })
-  for (const tab of tabs) {
-    if (tab.id !== undefined) void chrome.tabs.remove(tab.id).catch(() => undefined)
+async function closeWindows(path: string) {
+  for (const tab of await findTabs(path)) {
+    if (tab.id !== undefined) await chrome.tabs.remove(tab.id).catch(() => undefined)
   }
 }
 
-function clearCalibrationUi() {
-  void closeCalibrationWindow()
-  paintIcon()
+let loaded: Promise<void> | null = null
+
+/** The worker is torn down freely, so nothing may assume it has run before. */
+function hydrate() {
+  loaded ??= load()
+  return loaded
 }
 
-let voiceName: string | undefined
+async function load() {
+  const stored = await loadState()
+  settings = stored.settings
+  baseline = stored.baseline
+  pickVoice()
+}
+
+async function dialogState(): Promise<BackgroundState> {
+  return { settings, notificationPermission: await notificationPermission() }
+}
 
 /**
  * The worker speaks through chrome.tts, which needs no page and no user activation. The
- * siren plays in the monitor page, so the voice waits for it to finish rather than
- * talking over it.
+ * siren plays in the host page, so the voice waits for it to finish rather than talking
+ * over it.
  */
 function speakWarning() {
-  if (!state.settings.speech) return
-  setTimeout(speakNow, state.settings.siren ? VOICE_DELAY_MS : 0)
+  if (!settings.speech) return
+  setTimeout(speakNow, settings.siren ? VOICE_DELAY_MS : 0)
 }
 
 function speakNow() {
   if (!chrome.tts?.speak) {
-    void chrome.runtime
-      .sendMessage({ kind: 'monitor-speak', phrase: ALERT_PHRASE })
-      .catch(() => undefined)
+    void send({ kind: 'host-speak', phrase: ALERT_PHRASE })
     return
   }
 
@@ -444,7 +381,7 @@ async function notificationPermission(): Promise<'granted' | 'denied'> {
 }
 
 function notify(title: string, lines: string[]) {
-  if (!state.settings.notifications) return
+  if (!settings.notifications) return
   chrome.notifications.create({
     type: 'basic',
     iconUrl: chrome.runtime.getURL('icons/icon128.png'),
@@ -454,15 +391,8 @@ function notify(title: string, lines: string[]) {
   })
 }
 
-function broadcastSettings() {
-  void chrome.runtime
-    .sendMessage({ kind: 'monitor-settings', settings: state.settings })
-    .catch(() => undefined)
-}
-
-function paintIcon() {
-  const suffix = state.settings.enabled ? '' : '-off'
-  void chrome.action.setTitle({ title: iconTitle() })
+async function paint() {
+  const suffix = settings.enabled ? '' : '-off'
   void chrome.action.setIcon({
     path: {
       16: `icons/icon16${suffix}.png`,
@@ -471,24 +401,25 @@ function paintIcon() {
       128: `icons/icon128${suffix}.png`,
     },
   })
-  paintBadge()
-}
+  void chrome.action.setTitle({ title: iconTitle() })
 
-function paintBadge() {
-  void chrome.action.setBadgeText({ text: badgeText() })
-  void chrome.action.setBadgeBackgroundColor({ color: '#e2503f' })
+  const badge = await badgeState()
+  void chrome.action.setBadgeText({ text: badge.text })
+  void chrome.action.setBadgeBackgroundColor({ color: badge.color })
   if (chrome.action.setBadgeTextColor) void chrome.action.setBadgeTextColor({ color: '#ffffff' })
 }
 
 function iconTitle() {
-  if (!state.settings.enabled) return 'Posture Check — off'
-  if (state.good === false) return 'Posture Check — bad posture'
+  if (!settings.enabled) return 'Posture Check — off'
+  if (!baseline) return 'Posture Check — not calibrated'
+  if (posture === false) return 'Posture Check — bad posture'
   return 'Posture Check — on'
 }
 
-function badgeText() {
-  if (!state.settings.enabled) return ''
-  return state.good === false ? '!' : ''
+async function badgeState() {
+  if (await isCalibrating()) return BADGE_STARTING
+  if (!settings.enabled) return BADGE_CLEAR
+  if (posture === false) return BADGE_BAD
+  if (baseline && !attached) return BADGE_STARTING
+  return BADGE_CLEAR
 }
-
-export type { Settings }

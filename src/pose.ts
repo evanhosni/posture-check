@@ -9,15 +9,18 @@ export const DEFAULT_MODEL_PATH =
 export interface PoseLandmarkerPaths {
   wasmPath?: string
   modelPath?: string
+  /** GPU needs a rendering surface; a document that is never painted may not have one. */
+  delegate?: 'CPU' | 'GPU'
 }
 
 export async function createPoseLandmarker({
   wasmPath = DEFAULT_WASM_PATH,
   modelPath = DEFAULT_MODEL_PATH,
+  delegate = 'GPU',
 }: PoseLandmarkerPaths = {}) {
   const vision = await FilesetResolver.forVisionTasks(wasmPath)
   return PoseLandmarker.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: modelPath, delegate: 'GPU' },
+    baseOptions: { modelAssetPath: modelPath, delegate },
     runningMode: 'VIDEO',
     numPoses: 1,
   })

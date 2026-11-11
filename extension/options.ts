@@ -1,17 +1,7 @@
-import type { PostureStatus } from '../src/index'
-import type { BackgroundState, Message } from './shared/messages'
-import { readStorage, type Settings } from './shared/settings'
+import type { BackgroundState, Command } from './shared/messages'
+import { element } from './shared/dom'
+import { loadLastError, onLastErrorChanged, type Settings } from './shared/settings'
 import './styles.css'
-
-const STATUS_TEXT: Record<PostureStatus, string> = {
-  idle: 'Off',
-  loading: 'Starting the camera…',
-  ready: 'Ready.',
-  calibrating: 'Calibrating posture. Sit up straight.',
-  watching: 'Watching your posture.',
-  paused: 'Paused.',
-  error: 'Something went wrong.',
-}
 
 const enabledInput = element<HTMLInputElement>('enabled')
 const enabledLabel = element<HTMLSpanElement>('enabledLabel')
@@ -23,24 +13,19 @@ const soundInput = element<HTMLInputElement>('sound')
 const notificationsInput = element<HTMLInputElement>('notifications')
 const recalibrateButton = element<HTMLButtonElement>('recalibrate')
 const testButton = element<HTMLButtonElement>('test')
-const liveStatus = element<HTMLParagraphElement>('liveStatus')
 const lastError = element<HTMLParagraphElement>('lastError')
 const notificationHint = element<HTMLParagraphElement>('notificationHint')
 
-render((await chrome.runtime.sendMessage({ kind: 'get-state' })) as BackgroundState)
-void showLastError()
+render(await command({ kind: 'get-state' }))
 
-async function showLastError() {
-  const stored = await readStorage(['lastError'])
-  lastError.textContent = (stored.lastError as string | null) ?? ''
-}
+// Only failures are worth reporting here; posture itself shows on the toolbar icon.
+lastError.textContent = await loadLastError()
+onLastErrorChanged((message) => {
+  lastError.textContent = message
+})
 
 enabledInput.addEventListener('change', async () => {
-  const next = (await chrome.runtime.sendMessage({
-    kind: 'set-enabled',
-    enabled: enabledInput.checked,
-  })) as BackgroundState
-  render(next)
+  render(await command({ kind: 'set-enabled', enabled: enabledInput.checked }))
 })
 
 bindRange(sensitivityInput, sensitivityValue, (value) => String(value), (sensitivity) => ({
@@ -59,10 +44,16 @@ notificationsInput.addEventListener('change', async () => {
     return
   }
 
-  const state = (await chrome.runtime.sendMessage({
-    kind: 'verify-notifications',
-  })) as BackgroundState
+  const state = await command({ kind: 'verify-notifications' })
   showNotificationHint(state.notificationPermission)
+})
+
+recalibrateButton.addEventListener('click', () => {
+  void command({ kind: 'recalibrate' })
+})
+
+testButton.addEventListener('click', () => {
+  void command({ kind: 'test-alert' })
 })
 
 /**
@@ -94,30 +85,6 @@ function systemSettingsUrl() {
   return null
 }
 
-recalibrateButton.addEventListener('click', () => {
-  liveStatus.textContent = STATUS_TEXT.calibrating
-  void chrome.runtime.sendMessage({ kind: 'recalibrate' })
-})
-
-testButton.addEventListener('click', () => {
-  void chrome.runtime.sendMessage({ kind: 'test-alert' })
-})
-
-// The toolbar badge is hidden behind this dialog, so progress is mirrored here.
-chrome.runtime.onMessage.addListener((message: Message) => {
-  if (message.kind === 'monitor-calibrating') {
-    const seconds = Math.max(1, Math.ceil(message.remainingMs / 1000))
-    liveStatus.textContent = `${STATUS_TEXT.calibrating} ${seconds}s`
-  }
-  if (message.kind === 'monitor-calibrated') liveStatus.textContent = STATUS_TEXT.watching
-  if (message.kind === 'monitor-status') liveStatus.textContent = STATUS_TEXT[message.status]
-  if (message.kind === 'monitor-absent') liveStatus.textContent = 'Nobody in frame.'
-  if (message.kind === 'monitor-posture') {
-    liveStatus.textContent = message.good ? 'Posture looks good.' : 'Bad posture.'
-  }
-  if (message.kind === 'monitor-error') lastError.textContent = message.message
-})
-
 function bindRange(
   input: HTMLInputElement,
   output: HTMLElement,
@@ -133,11 +100,7 @@ function bindRange(
 }
 
 async function update(settings: Partial<Settings>) {
-  const next = (await chrome.runtime.sendMessage({
-    kind: 'set-settings',
-    settings,
-  })) as BackgroundState
-  render(next)
+  render(await command({ kind: 'set-settings', settings }))
 }
 
 function render(state: BackgroundState) {
@@ -149,11 +112,8 @@ function render(state: BackgroundState) {
   holdValue.textContent = `${state.settings.holdSeconds}s`
   soundInput.checked = state.settings.siren || state.settings.speech
   notificationsInput.checked = state.settings.notifications
-  liveStatus.textContent = state.settings.enabled ? STATUS_TEXT[state.status] : STATUS_TEXT.idle
 }
 
-function element<T extends HTMLElement>(id: string) {
-  const node = document.getElementById(id)
-  if (!node) throw new Error(`Missing element #${id}`)
-  return node as T
+async function command(message: Command): Promise<BackgroundState> {
+  return (await chrome.runtime.sendMessage(message)) as BackgroundState
 }

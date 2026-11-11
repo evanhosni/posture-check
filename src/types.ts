@@ -10,8 +10,10 @@ export type PostureStatus =
   | 'error'
 
 export interface PostureMetrics {
-  /** Ear-to-shoulder vertical gap over shoulder width. Shrinks when the neck collapses. */
+  /** Nose-to-shoulder vertical gap over shoulder width. Shrinks when the neck collapses. */
   neckRatio: number
+  /** The same gap measured from the ears, which is sharper but often not visible at all. */
+  earNeckRatio: number | null
   /** Shoulder width in frame units. Grows as the body moves toward the camera. */
   shoulderWidth: number
   /** Shoulder height difference over shoulder width. Non-zero when leaning to one side. */
@@ -32,6 +34,8 @@ export interface PostureIssue {
 export interface PostureVerdict {
   good: boolean
   issues: PostureIssue[]
+  /** Worst deviation across every check, as a fraction of its limit. 1 is exactly at it. */
+  strain: number
 }
 
 export interface AlertOptions {
@@ -83,6 +87,8 @@ export interface PostureWatcherOptions {
   wasmPath?: string
   /** Where the pose model is served from. */
   modelPath?: string
+  /** Inference backend. CPU is slower but needs no rendering surface. */
+  delegate?: 'CPU' | 'GPU'
   /** Start monitoring as soon as a baseline exists. */
   autoEnable?: boolean
 }

@@ -1,7 +1,7 @@
-import type { PostureIssue, PostureStatus } from '../../src/index'
-import type { Settings, StoredState } from './settings'
+import type { PostureIssue, PostureMetrics } from '../../src/index'
+import type { Settings } from './settings'
 
-/** Sent by the settings page to the background worker. */
+/** Sent by the settings dialog to the background worker. Answered with BackgroundState. */
 export type Command =
   | { kind: 'get-state' }
   | { kind: 'set-settings'; settings: Partial<Settings> }
@@ -10,36 +10,42 @@ export type Command =
   | { kind: 'test-alert' }
   | { kind: 'verify-notifications' }
 
-/** Sent by whichever page is running the camera. */
-export type MonitorReport =
-  | { kind: 'monitor-attached' }
-  | { kind: 'monitor-status'; status: PostureStatus }
-  | { kind: 'monitor-calibrating'; progress: number; remainingMs: number }
-  | { kind: 'monitor-calibrated'; baseline: StoredState['baseline'] }
-  | { kind: 'monitor-posture'; good: boolean; issues: PostureIssue[] }
-  | { kind: 'monitor-absent' }
-  | { kind: 'monitor-alert'; issues: PostureIssue[] }
-  | { kind: 'monitor-error'; message: string }
-  | { kind: 'permission-granted' }
+/** Sent to the background worker by the camera host and the calibration window. */
+export type Report =
+  | { kind: 'host-attached' }
+  | { kind: 'host-posture'; good: boolean | null }
+  | { kind: 'host-alert'; issues: PostureIssue[] }
+  | { kind: 'host-error'; message: string }
+  | { kind: 'calibrated'; baseline: PostureMetrics }
+  | { kind: 'calibration-failed'; message: string }
 
-/** Sent by the background worker to the monitor pages. */
-export type MonitorCommand =
-  | { kind: 'monitor-settings'; settings: Settings }
-  | { kind: 'monitor-calibrate'; seconds: number }
-  | { kind: 'monitor-test-alert' }
-  | { kind: 'monitor-speak'; phrase: string }
+/** Sent by the background worker to the camera host. */
+export type HostCommand =
+  | { kind: 'host-settings'; settings: Settings; baseline: PostureMetrics | null }
+  | { kind: 'host-siren' }
+  | { kind: 'host-speak'; phrase: string }
+  | { kind: 'host-ping' }
 
-export type Message = Command | MonitorReport | MonitorCommand
+export type Message = Command | Report | HostCommand
 
-export interface BackgroundState extends StoredState {
+/** The settings dialog's view of the worker. */
+export interface BackgroundState {
+  settings: Settings
   /** Whether the browser itself will show notifications; the OS may still block them. */
   notificationPermission: 'granted' | 'denied'
-  status: PostureStatus
-  good: boolean | null
-  issues: PostureIssue[]
-  monitoring: boolean
 }
 
-export function send(message: Message) {
-  return chrome.runtime.sendMessage(message).catch(() => undefined)
+/** What a camera host needs to score posture, since it cannot read storage itself. */
+export interface HostSettings {
+  settings: Settings
+  baseline: PostureMetrics | null
+}
+
+export async function send(message: Message): Promise<unknown> {
+  try {
+    return await chrome.runtime.sendMessage(message)
+  } catch {
+    // Nothing is listening: the worker is the only context guaranteed to be there.
+    return undefined
+  }
 }

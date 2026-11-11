@@ -16,6 +16,17 @@
   box-sizing: border-box;
 }
 
+/* Every page here is a small window sized to its content; a scrollbar is only noise. */
+html,
+body {
+  scrollbar-width: none;
+}
+
+html::-webkit-scrollbar,
+body::-webkit-scrollbar {
+  display: none;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -32,6 +43,8 @@ body {
 
 .options {
   width: 340px;
+  padding: 16px 18px 18px;
+  gap: 10px;
 }
 
 .options-header {
@@ -151,12 +164,33 @@ button.primary {
   font-size: 13px;
 }
 
-/* The calibration window: a centered card with a filling progress bar. */
+/* The calibration window: a centered card with a camera preview and a filling bar. */
 .calibrating {
   align-items: center;
   text-align: center;
   gap: 10px;
-  padding: 22px 24px;
+  padding: 18px 20px 20px;
+}
+
+.preview {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: #000;
+}
+
+.preview video,
+.preview canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* Mirrored, so leaning left on screen is leaning left in the room. */
+  transform: scaleX(-1);
 }
 
 .meter {
