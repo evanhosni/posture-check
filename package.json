@@ -12,6 +12,7 @@
     "build:chrome": "yarn assets && EXT_TARGET=chrome vite build && node scripts/write-manifest.mjs chrome",
     "build:firefox": "yarn assets && EXT_TARGET=firefox vite build && node scripts/write-manifest.mjs firefox",
     "package:chrome": "yarn build:chrome && rm -f posture-check-chrome.zip && cd dist && zip -qr ../posture-check-chrome.zip .",
+    "package:firefox": "yarn build:firefox && rm -f posture-check-firefox.zip && cd dist-firefox && zip -qr ../posture-check-firefox.zip .",
     "dev:chrome": "yarn assets && EXT_TARGET=chrome vite build --watch",
     "dev:firefox": "yarn assets && EXT_TARGET=firefox vite build --watch",
     "typecheck": "tsc --noEmit"

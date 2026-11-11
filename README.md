@@ -110,6 +110,7 @@ yarn typecheck
 yarn build:chrome    # Chrome -> dist/
 yarn build:firefox   # Firefox -> dist-firefox/
 yarn package:chrome  # Chrome -> posture-check-chrome.zip, for the Web Store
+yarn package:firefox # Firefox -> posture-check-firefox.zip, for addons.mozilla.org
 ```
 
 `yarn assets` (run by the builds) copies the MediaPipe wasm runtime out of
