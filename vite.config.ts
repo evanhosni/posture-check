@@ -1,6 +1,7 @@
 import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 
+// Named by the build scripts; neither browser is the implied default.
 const target = process.env.EXT_TARGET === 'firefox' ? 'firefox' : 'chrome'
 
 export default defineConfig({

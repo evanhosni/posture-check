@@ -8,7 +8,7 @@ the machine, and the extension makes no network requests at runtime.
 
 ```bash
 yarn
-yarn build
+yarn build:chrome
 ```
 
 1. Open `chrome://extensions`.
@@ -104,10 +104,12 @@ Firefox.
 ## Development
 
 ```bash
-yarn dev            # rebuild dist/ on change, then hit Reload in chrome://extensions
+yarn dev:chrome      # rebuild dist/ on change, then hit Reload in chrome://extensions
+yarn dev:firefox     # the same for dist-firefox/
 yarn typecheck
-yarn build          # Chrome -> dist/
-yarn build:firefox  # Firefox -> dist-firefox/
+yarn build:chrome    # Chrome -> dist/
+yarn build:firefox   # Firefox -> dist-firefox/
+yarn package:chrome  # Chrome -> posture-check-chrome.zip, for the Web Store
 ```
 
 `yarn assets` (run by the builds) copies the MediaPipe wasm runtime out of
