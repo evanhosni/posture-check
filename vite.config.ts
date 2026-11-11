@@ -1,8 +1,13 @@
 import { resolve } from 'node:path'
 import { defineConfig } from 'vite'
 
-// Named by the build scripts; neither browser is the implied default.
-const target = process.env.EXT_TARGET === 'firefox' ? 'firefox' : 'chrome'
+const TARGETS = ['chrome', 'firefox']
+
+// Every build names its browser: neither one is the implied default.
+const target = process.env.EXT_TARGET ?? ''
+if (!TARGETS.includes(target)) {
+  throw new Error(`Set EXT_TARGET to one of: ${TARGETS.join(', ')}`)
+}
 
 export default defineConfig({
   root: 'extension',
@@ -11,7 +16,7 @@ export default defineConfig({
     // Extension pages and the background worker are loaded as ES modules, so top-level
     // await and the MediaPipe bundle both need an untranspiled target.
     target: 'esnext',
-    outDir: resolve(__dirname, target === 'firefox' ? 'dist-firefox' : 'dist'),
+    outDir: resolve(__dirname, `dist-${target}`),
     emptyOutDir: true,
     rollupOptions: {
       input: {

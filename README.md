@@ -13,7 +13,7 @@ yarn build:chrome
 
 1. Open `chrome://extensions`.
 2. Turn on **Developer mode** (top right).
-3. Click **Load unpacked** and pick the `dist` folder in this repo.
+3. Click **Load unpacked** and pick the `dist-chrome` folder in this repo.
 4. Pin the extension so the icon stays visible.
 
 There is no page and no panel. The toolbar icon is the switch:
@@ -104,10 +104,10 @@ Firefox.
 ## Development
 
 ```bash
-yarn dev:chrome      # rebuild dist/ on change, then hit Reload in chrome://extensions
+yarn dev:chrome      # rebuild dist-chrome/ on change, then Reload in chrome://extensions
 yarn dev:firefox     # the same for dist-firefox/
 yarn typecheck
-yarn build:chrome    # Chrome -> dist/
+yarn build:chrome    # Chrome -> dist-chrome/
 yarn build:firefox   # Firefox -> dist-firefox/
 yarn package:chrome  # Chrome -> posture-check-chrome.zip, for the Web Store
 yarn package:firefox # Firefox -> posture-check-firefox.zip, for addons.mozilla.org

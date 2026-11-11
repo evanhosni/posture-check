@@ -152,6 +152,7 @@ vite.config.ts.timestamp-*
 .DS_Store
 
 # Extension build output and generated assets
+dist-chrome
 dist-firefox
 *.zip
 extension/public/wasm

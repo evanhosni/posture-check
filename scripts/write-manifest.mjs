@@ -2,9 +2,15 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const target = process.argv[2] === 'firefox' ? 'firefox' : 'chrome'
+const TARGETS = ['chrome', 'firefox']
+
+// Every build names its browser: neither one is the implied default.
+const target = process.argv[2]
+if (!TARGETS.includes(target)) {
+  throw new Error(`Name the target: ${TARGETS.join(' | ')}`)
+}
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const outDir = resolve(root, target === 'firefox' ? 'dist-firefox' : 'dist')
+const outDir = resolve(root, `dist-${target}`)
 
 const [manifest, pkg] = await Promise.all([
   readJson(resolve(root, `extension/manifest.${target}.json`)),
