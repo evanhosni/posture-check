@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Posture Check",
-  "description": "Watches your posture through the webcam and sounds off when you start slouching.",
+  "description": "Watches your posture through the webcam and alerts you when you start to slouch",
   "permissions": [
     "storage",
     "notifications",

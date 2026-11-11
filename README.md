@@ -1,7 +1,7 @@
 # Posture Check
 
-A Chrome and Firefox extension that watches you through the webcam and sounds off
-when you start slouching. Pose estimation runs locally — the video never leaves
+A Chrome and Firefox extension that watches your posture through the webcam and
+alerts you when you start to slouch. Pose estimation runs locally — the video never leaves
 the machine, and the extension makes no network requests at runtime.
 
 ## Install in Chrome (unpacked)

@@ -1,7 +1,7 @@
 {
   "name": "posture-check",
   "version": "1.0.0",
-  "description": "Browser extension that watches your posture through the webcam and alerts you when you slouch.",
+  "description": "Watches your posture through the webcam and alerts you when you start to slouch",
   "type": "module",
   "repository": {
     "type": "git",
