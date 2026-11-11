@@ -153,6 +153,7 @@ vite.config.ts.timestamp-*
 
 # Extension build output and generated assets
 dist-firefox
+*.zip
 extension/public/wasm
 extension/public/models
 extension/public/icons

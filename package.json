@@ -11,6 +11,7 @@
     "assets": "node scripts/fetch-assets.mjs && node scripts/make-icons.mjs",
     "build": "yarn assets && vite build && node scripts/write-manifest.mjs chrome",
     "build:firefox": "yarn assets && EXT_TARGET=firefox vite build && node scripts/write-manifest.mjs firefox",
+    "package": "yarn build && rm -f posture-check-chrome.zip && cd dist && zip -qr ../posture-check-chrome.zip .",
     "dev": "yarn assets && vite build --watch",
     "typecheck": "tsc --noEmit"
   },
